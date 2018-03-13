@@ -49,6 +49,53 @@ public class DecisionTreeImpl extends DecisionTree {
         // this.labels contains the possible labels for an instance
         // this.attributes contains the whole set of attribute names
         // train.instances contains the list of instances
+
+        root = decisionTreeImplHelper(train.instances,attributes, majorityLabel(train.instances), null, null);
+    }
+
+    DecTreeNode decisionTreeImplHelper(List<Instance> instances, List<String> attributes, String defaultLabel, String attribute, String parentAttributeVal){
+
+        if(instances.isEmpty()){
+            //TODO: Think I have to change those nulls, will leave them for now
+            return new DecTreeNode(defaultLabel, attribute, parentAttributeVal, true);
+        }
+        if(sameLabel(instances)){
+            //TODO: Probably have to change those nulls
+            return new DecTreeNode(majorityLabel(instances), attribute, parentAttributeVal, true);
+        }
+        if(attributes.isEmpty()){
+            return new DecTreeNode(majorityLabel(instances), attribute, parentAttributeVal, true);
+        }
+        //calculate best info gain from the list of attributes
+        String bestAttr = attributes.get(0);
+        double maxInfoGain = InfoGain(instances, bestAttr);
+        for(String attr: attributes){
+            double infoGain = InfoGain(instances, attr);
+            if(infoGain > maxInfoGain){
+                maxInfoGain = infoGain;
+                bestAttr = attr;
+            }
+        }
+        DecTreeNode curr = new DecTreeNode(majorityLabel(instances), bestAttr, parentAttributeVal, false);
+        for(String attr: attributeValues.get(bestAttr)){
+            //v-ex = subset of examples with q == v
+            //subtree = buildtree(v-ex, attributes - {q}, majority-class(examples))
+            //add arc from tree to subtree
+            List<Instance> vEX = instances.stream().filter(q -> q.attributes.contains(attr)).collect(Collectors.toList());
+            ArrayList<String> newAttributes = new ArrayList<>(attributes);
+            newAttributes.remove(bestAttr);
+            DecTreeNode subtree;
+            if(vEX.isEmpty()){
+                subtree = decisionTreeImplHelper(vEX, newAttributes, defaultLabel,bestAttr, attr);
+            }
+            else {
+                String majorityLabel = majorityLabel(vEX);
+                subtree = decisionTreeImplHelper(vEX, newAttributes, majorityLabel,bestAttr, attr);
+            }
+            curr.children.add(subtree);
+        }
+
+        return curr;
     }
 
     boolean sameLabel(List<Instance> instances) {
@@ -100,7 +147,7 @@ public class DecisionTreeImpl extends DecisionTree {
         // returns the Entropy of a list of examples
 
 
-        int totalSize = instances.size();
+        double totalSize = instances.size();
 
 
         //use part of majority label code to get counts of all the labels
@@ -115,10 +162,13 @@ public class DecisionTreeImpl extends DecisionTree {
         }
         //don't really care about the label, just the values
         double entropy = 0.0;
-        for(int value: labels.values()){
+        for(double value: labels.values()){
             double probability = value/totalSize;
-            double log = Math.log(probability) / Math.log(2); // log10 / log 2 makes log base 2
-            entropy = entropy + (log * probability);
+            if(probability != 0) {
+                double log = Math.log(probability) / Math.log(2); // log10 / log 2 makes log base 2
+                //TODO: Check if entropy forumal is negative
+                entropy = entropy - (log * probability);
+            }
         }
 
         return entropy;
@@ -130,36 +180,51 @@ public class DecisionTreeImpl extends DecisionTree {
 
         //copy some of the maxLabelCount function code to get counts of labels and list of labels
         //create a hashmap for the labels
-        HashMap<String, Integer> labels = new HashMap<>();
-
-        for(Instance curr: instances){
-            if(labels.containsKey(curr.label)) labels.put(curr.label, labels.get(curr.label) + 1);
-            else {
-                labels.put(curr.label, 1);
-            }
-        }
-
-
         double entropy = 0.0;
-        for(String label: labels.keySet()){
-            //find instances where attribute exists given the label
-            List<Instance> attrYes = instances.stream().filter(p -> p.label.equals(label) && p.attributes.contains(attr)).collect(Collectors.toList());
-            // find prob of attribute exists given some label
-            double probYes = attrYes.size() / labels.get(label);
-            // get log value
-            double logYes = Math.log(probYes) / Math.log(2);
+        int yes = 0, no = 0;
+        int count[] = new int[attributeValues.get(attr).size()];
+        int total[] = new int[attributeValues.get(attr).size()];
+        for(Instance curr: instances){
+            String value = curr.attributes.get(getAttributeIndex(attr));
+            int index = getAttributeValueIndex(attr, value);
+            if(curr.label.equals(this.labels.get(0))) count[index]++;
+            total[index]++;
+        }
+        //yes and no are arbitrary
+        //variables to use to calculate conditional entropy
+        double weight;
+        double probYes = 0.0;
+        double probNo = 0.0;
+        for(int i = 0; i < attributeValues.get(attr).size(); i++){
+            weight = total[i] * 1.0/instances.size();
 
-            //find number of instances where attr doesn't exist
-            int numAttrNotExist = labels.get(label) - attrYes.size();
-            double probNo = numAttrNotExist/labels.get(label);
-            //get log
-            double logNo = Math.log(probNo) / Math.log(2);
+            if(total[i] != 0){
+                probYes = 1.0 * count[i]/total[i];
+                probNo = 1 - probYes;
+            }
+            double logYes =0.0, logNo=0.0;
+            if(probYes != 0) logYes = Math.log(probYes) * 1.0 / Math.log(2);
 
-            double specificEntropy = -(probYes * logYes) - (probNo * logNo);
-            entropy+=specificEntropy;
+            if(probNo != 0) logNo = Math.log(probNo) * 1.0 / Math.log(2);
+            entropy = entropy + weight * -1.0 * (probYes*logYes + probNo*logNo);
         }
 
-        // H(Y | X=v) = -(P(Y=attr | X = someLabel) * log2(P(Y=attr | X = someLabel)) - (P(Y != attr | X)* log2(P))
+        /*
+        double overallProbablity = (yes + no) *1.0 /instances.size();
+
+        //we use this in to diving yes.size and no.size by
+        int totalInInstance = yes + no;
+        double logYes =0.0, logNo=0.0;
+
+        double yesProb = yes * 1.0 / totalInInstance;
+        if(yesProb != 0) logYes = Math.log(yesProb) * 1.0 / Math.log(2);
+
+        double noProb = no * 1.0 / totalInInstance;
+        if(noProb != 0) logNo = Math.log(noProb) * 1.0 / Math.log(2);
+
+        entropy = overallProbablity * -1.0 * (yesProb*logYes + noProb*logNo);
+
+*/
 
         return entropy;
     }
@@ -176,7 +241,17 @@ public class DecisionTreeImpl extends DecisionTree {
         // The tree is already built, when this function is called
         // this.root will contain the learnt decision tree.
         // write a recusive helper function, to return the predicted label of instance
-        return "";
+
+        return classifyHelper(instance, this.root);
+    }
+    public String classifyHelper(Instance instance, DecTreeNode curr){
+        //read if current node is terminal
+        if(curr.terminal) return curr.label;
+        //otherwise go down the tree following the right path
+        for(DecTreeNode child: curr.children){
+            if(instance.attributes.contains(child.attribute)) return classifyHelper(instance, child);
+        }
+        return curr.label;
     }
 
     @Override
@@ -189,6 +264,9 @@ public class DecisionTreeImpl extends DecisionTree {
         // The decision tree may not exist when this funcion is called.
         // But you just need to calculate the info gain with each attribute,
         // on the entire training set.
+        for(String attr: attributes) {
+            System.out.format("%.5f\n", InfoGain(train.instances, attr));
+        }
     }
 
     @Override
@@ -199,7 +277,16 @@ public class DecisionTreeImpl extends DecisionTree {
         // You need to call function classify, and compare the predicted labels.
         // List of instances: test.instances
         // getting the real label: test.instances.get(i).label
-        return;
+        double right = 0.0;
+        double total = 0.0;
+        for(Instance instance: test.instances){
+            total++;
+            String predictedLabel = classify(instance);
+            if(predictedLabel.equals(instance.label)) right++;
+        }
+        System.out.format("%.5f\n", right/total);
+        //print();
+
     }
 
     @Override
